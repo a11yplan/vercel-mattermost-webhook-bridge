@@ -1,6 +1,7 @@
 name = "vercel-mattermost-webhook-bridge"
 main = "src/index.js"
 compatibility_date = "2024-01-01"
+account_id = "741118dc16030b5804645dec9959db53"
 
 [env.production]
 vars = { }

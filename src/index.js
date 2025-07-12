@@ -13,10 +13,11 @@ export default {
     try {
       const vercelPayload = await request.json();
       
-      const mattermostWebhookUrl = env.MATTERMOST_WEBHOOK_URL;
+      // Get Mattermost webhook URL from query parameter or environment variable
+      const mattermostWebhookUrl = url.searchParams.get('webhook_url') || env.MATTERMOST_WEBHOOK_URL;
       if (!mattermostWebhookUrl) {
-        console.error('MATTERMOST_WEBHOOK_URL not configured');
-        return new Response('Server configuration error', { status: 500 });
+        console.error('Mattermost webhook URL not provided in query parameter or environment');
+        return new Response('Missing webhook_url parameter or MATTERMOST_WEBHOOK_URL configuration', { status: 400 });
       }
 
       const mattermostPayload = formatVercelToMattermost(vercelPayload);
@@ -43,126 +44,411 @@ export default {
 };
 
 function formatVercelToMattermost(vercelPayload) {
-  const { type, payload, createdAt } = vercelPayload;
-  
-  let title = '';
-  let text = '';
-  let color = '#0070f3';
-  
-  switch (type) {
-    case 'deployment':
-      title = `🚀 Deployment ${payload.deployment.meta.githubCommitMessage || 'Update'}`;
-      text = formatDeployment(payload);
-      color = payload.deployment.ready ? '#0f9549' : '#f5a623';
-      break;
-      
-    case 'deployment-ready':
-      title = '✅ Deployment Ready';
-      text = formatDeploymentReady(payload);
-      color = '#0f9549';
-      break;
-      
-    case 'deployment-error':
-      title = '❌ Deployment Failed';
-      text = formatDeploymentError(payload);
-      color = '#e00';
-      break;
-      
-    case 'deployment-canceled':
-      title = '🚫 Deployment Canceled';
-      text = formatDeploymentCanceled(payload);
-      color = '#666';
-      break;
-      
-    default:
-      title = `📢 ${type}`;
-      text = JSON.stringify(payload, null, 2);
+  try {
+    const { type, payload, createdAt } = vercelPayload;
+    
+    let attachment = {
+      color: '#0070f3',
+      fields: [],
+      actions: []
+    };
+    
+    switch (type) {
+      case 'deployment':
+        attachment = formatDeployment(payload);
+        break;
+        
+      case 'deployment-ready':
+        attachment = formatDeploymentReady(payload);
+        break;
+        
+      case 'deployment-error':
+        attachment = formatDeploymentError(payload);
+        break;
+        
+      case 'deployment-canceled':
+        attachment = formatDeploymentCanceled(payload);
+        break;
+        
+      default:
+        attachment = {
+          fallback: `Vercel ${type}`,
+          color: '#0070f3',
+          title: `📢 ${type}`,
+          text: '```json\n' + JSON.stringify(payload, null, 2).slice(0, 3000) + '\n```',
+          fields: []
+        };
+    }
+    
+    // Add timestamp
+    const timestamp = createdAt ? new Date(createdAt).toISOString() : new Date().toISOString();
+    attachment.footer = `Vercel | ${timestamp}`;
+    attachment.footer_icon = 'https://assets.vercel.com/image/upload/v1588805858/repositories/vercel/logo.png';
+    
+    return {
+      username: 'Vercel',
+      icon_url: 'https://assets.vercel.com/image/upload/v1588805858/repositories/vercel/logo.png',
+      attachments: [attachment]
+    };
+  } catch (error) {
+    // Failsafe: always send something
+    console.error('Error formatting notification:', error);
+    return {
+      username: 'Vercel',
+      icon_url: 'https://assets.vercel.com/image/upload/v1588805858/repositories/vercel/logo.png',
+      attachments: [{
+        fallback: 'Vercel Notification',
+        color: '#0070f3',
+        title: 'Vercel Notification',
+        text: 'A deployment event occurred. Check Vercel dashboard for details.',
+        footer: `Vercel | ${new Date().toISOString()}`
+      }]
+    };
   }
-  
-  const timestamp = new Date(createdAt).toISOString();
-  
-  return {
-    username: 'Vercel',
-    icon_url: 'https://assets.vercel.com/image/upload/v1588805858/repositories/vercel/logo.png',
-    attachments: [{
-      fallback: title,
-      color: color,
-      title: title,
-      text: text,
-      footer: `Vercel | ${timestamp}`,
-      footer_icon: 'https://assets.vercel.com/image/upload/v1588805858/repositories/vercel/logo.png',
-    }],
-  };
 }
 
 function formatDeployment(payload) {
-  const { deployment, project, team } = payload;
-  const domain = deployment.url || deployment.alias?.[0] || 'No domain';
-  
-  let text = `**Project:** ${project.name}\n`;
-  text += `**Environment:** ${deployment.target || 'production'}\n`;
-  text += `**URL:** https://${domain}\n`;
-  
-  if (deployment.meta.githubCommitRef) {
-    text += `**Branch:** ${deployment.meta.githubCommitRef}\n`;
+  try {
+    const { deployment, project, team, links } = payload;
+    const domain = deployment?.url || deployment?.alias?.[0] || 'Unknown';
+    const meta = deployment?.meta || {};
+    
+    const attachment = {
+      fallback: `Deployment started for ${project?.name || 'Unknown project'}`,
+      color: '#f5a623',
+      title: `🚀 Deployment Started`,
+      title_link: links?.deployment || deployment?.inspectorUrl,
+      fields: []
+    };
+    
+    // Add fields with failsafe
+    if (project?.name) {
+      attachment.fields.push({ title: '📁 Project', value: project.name, short: true });
+    }
+    
+    attachment.fields.push({ 
+      title: '🌍 Environment', 
+      value: deployment?.target || 'production', 
+      short: true 
+    });
+    
+    if (domain) {
+      attachment.fields.push({ 
+        title: '🔗 URL', 
+        value: `<https://${domain}|${domain}>`, 
+        short: false 
+      });
+    }
+    
+    if (meta.githubCommitRef) {
+      attachment.fields.push({ 
+        title: '🌿 Branch', 
+        value: meta.githubCommitRef, 
+        short: true 
+      });
+    }
+    
+    if (meta.githubCommitAuthorLogin) {
+      attachment.fields.push({ 
+        title: '👤 Author', 
+        value: meta.githubCommitAuthorLogin, 
+        short: true 
+      });
+    }
+    
+    if (meta.githubCommitSha) {
+      attachment.fields.push({ 
+        title: '🔖 Commit', 
+        value: `\`${meta.githubCommitSha.substring(0, 7)}\``, 
+        short: true 
+      });
+    }
+    
+    if (meta.githubCommitMessage) {
+      attachment.fields.push({ 
+        title: '💬 Message', 
+        value: meta.githubCommitMessage.substring(0, 100), 
+        short: true 
+      });
+    }
+    
+    if (team?.name) {
+      attachment.fields.push({ 
+        title: '👥 Team', 
+        value: team.name, 
+        short: true 
+      });
+    }
+    
+    // Add action buttons for quick access
+    attachment.actions = [];
+    if (deployment?.inspectorUrl) {
+      attachment.actions.push({
+        type: 'button',
+        text: '🔍 View Deployment',
+        url: deployment.inspectorUrl
+      });
+    }
+    if (links?.project) {
+      attachment.actions.push({
+        type: 'button',
+        text: '📊 Project Dashboard',
+        url: links.project
+      });
+    }
+    
+    return attachment;
+  } catch (error) {
+    console.error('Error formatting deployment:', error);
+    return {
+      fallback: 'Deployment started',
+      color: '#f5a623',
+      title: '🚀 Deployment Started',
+      text: 'A deployment has started. Check Vercel for details.'
+    };
   }
-  
-  if (deployment.meta.githubCommitAuthorLogin) {
-    text += `**Author:** ${deployment.meta.githubCommitAuthorLogin}\n`;
-  }
-  
-  if (deployment.meta.githubCommitSha) {
-    text += `**Commit:** \`${deployment.meta.githubCommitSha.substring(0, 7)}\`\n`;
-  }
-  
-  if (team) {
-    text += `**Team:** ${team.name}\n`;
-  }
-  
-  return text;
 }
 
 function formatDeploymentReady(payload) {
-  const { deployment, project } = payload;
-  const domain = deployment.url || deployment.alias?.[0] || 'No domain';
-  
-  let text = `✅ **${project.name}** is now live!\n\n`;
-  text += `🌐 **URL:** https://${domain}\n`;
-  text += `📦 **Environment:** ${deployment.target || 'production'}\n`;
-  
-  if (deployment.meta.githubCommitMessage) {
-    text += `\n💬 **Commit:** ${deployment.meta.githubCommitMessage}`;
+  try {
+    const { deployment, project, links } = payload;
+    const domain = deployment?.url || deployment?.alias?.[0] || 'Unknown';
+    const meta = deployment?.meta || {};
+    
+    const attachment = {
+      fallback: `Deployment ready for ${project?.name || 'Unknown project'}`,
+      color: '#0f9549',
+      title: `✅ Deployment Ready`,
+      title_link: links?.deployment || deployment?.inspectorUrl,
+      fields: []
+    };
+    
+    if (project?.name) {
+      attachment.fields.push({ 
+        title: '🎉 Project', 
+        value: `**${project.name}** is now live!`, 
+        short: false 
+      });
+    }
+    
+    if (domain) {
+      attachment.fields.push({ 
+        title: '🌐 Live URL', 
+        value: `<https://${domain}|https://${domain}>`, 
+        short: false 
+      });
+    }
+    
+    attachment.fields.push({ 
+      title: '📦 Environment', 
+      value: deployment?.target || 'production', 
+      short: true 
+    });
+    
+    if (meta.githubCommitMessage) {
+      attachment.fields.push({ 
+        title: '💬 Commit Message', 
+        value: meta.githubCommitMessage.substring(0, 200), 
+        short: false 
+      });
+    }
+    
+    if (meta.githubCommitSha) {
+      attachment.fields.push({ 
+        title: '🔖 Commit SHA', 
+        value: `\`${meta.githubCommitSha.substring(0, 7)}\``, 
+        short: true 
+      });
+    }
+    
+    // Add action buttons
+    attachment.actions = [];
+    if (domain) {
+      attachment.actions.push({
+        type: 'button',
+        text: '🚀 Visit Site',
+        url: `https://${domain}`,
+        style: 'primary'
+      });
+    }
+    if (deployment?.inspectorUrl) {
+      attachment.actions.push({
+        type: 'button',
+        text: '📊 View Details',
+        url: deployment.inspectorUrl
+      });
+    }
+    
+    return attachment;
+  } catch (error) {
+    console.error('Error formatting deployment ready:', error);
+    return {
+      fallback: 'Deployment ready',
+      color: '#0f9549',
+      title: '✅ Deployment Ready',
+      text: 'Your deployment is now live!'
+    };
   }
-  
-  return text;
 }
 
 function formatDeploymentError(payload) {
-  const { deployment, project } = payload;
-  
-  let text = `❌ Failed to deploy **${project.name}**\n\n`;
-  text += `📦 **Environment:** ${deployment.target || 'production'}\n`;
-  
-  if (deployment.meta.githubCommitRef) {
-    text += `🌿 **Branch:** ${deployment.meta.githubCommitRef}\n`;
+  try {
+    const { deployment, project, links } = payload;
+    const meta = deployment?.meta || {};
+    
+    const attachment = {
+      fallback: `Deployment failed for ${project?.name || 'Unknown project'}`,
+      color: '#e00',
+      title: `❌ Deployment Failed`,
+      title_link: links?.deployment || deployment?.inspectorUrl,
+      fields: []
+    };
+    
+    if (project?.name) {
+      attachment.fields.push({ 
+        title: '📁 Project', 
+        value: project.name, 
+        short: true 
+      });
+    }
+    
+    attachment.fields.push({ 
+      title: '📦 Environment', 
+      value: deployment?.target || 'production', 
+      short: true 
+    });
+    
+    if (meta.githubCommitRef) {
+      attachment.fields.push({ 
+        title: '🌿 Branch', 
+        value: meta.githubCommitRef, 
+        short: true 
+      });
+    }
+    
+    if (meta.githubCommitAuthorLogin) {
+      attachment.fields.push({ 
+        title: '👤 Author', 
+        value: meta.githubCommitAuthorLogin, 
+        short: true 
+      });
+    }
+    
+    if (deployment?.errorMessage) {
+      attachment.fields.push({ 
+        title: '⚠️ Error Message', 
+        value: deployment.errorMessage, 
+        short: false 
+      });
+    }
+    
+    if (meta.githubCommitMessage) {
+      attachment.fields.push({ 
+        title: '💬 Commit Message', 
+        value: meta.githubCommitMessage.substring(0, 100), 
+        short: false 
+      });
+    }
+    
+    // Add action buttons
+    attachment.actions = [];
+    if (deployment?.inspectorUrl) {
+      attachment.actions.push({
+        type: 'button',
+        text: '🔍 View Error Details',
+        url: deployment.inspectorUrl,
+        style: 'danger'
+      });
+    }
+    if (links?.project) {
+      attachment.actions.push({
+        type: 'button',
+        text: '📊 Project Dashboard',
+        url: links.project
+      });
+    }
+    
+    return attachment;
+  } catch (error) {
+    console.error('Error formatting deployment error:', error);
+    return {
+      fallback: 'Deployment failed',
+      color: '#e00',
+      title: '❌ Deployment Failed',
+      text: 'The deployment failed. Check Vercel for error details.'
+    };
   }
-  
-  if (deployment.errorMessage) {
-    text += `\n⚠️ **Error:** ${deployment.errorMessage}`;
-  }
-  
-  return text;
 }
 
 function formatDeploymentCanceled(payload) {
-  const { deployment, project } = payload;
-  
-  let text = `🚫 Deployment canceled for **${project.name}**\n\n`;
-  text += `📦 **Environment:** ${deployment.target || 'production'}\n`;
-  
-  if (deployment.meta.githubCommitRef) {
-    text += `🌿 **Branch:** ${deployment.meta.githubCommitRef}\n`;
+  try {
+    const { deployment, project, links } = payload;
+    const meta = deployment?.meta || {};
+    
+    const attachment = {
+      fallback: `Deployment canceled for ${project?.name || 'Unknown project'}`,
+      color: '#666',
+      title: `🚫 Deployment Canceled`,
+      title_link: links?.deployment || deployment?.inspectorUrl,
+      fields: []
+    };
+    
+    if (project?.name) {
+      attachment.fields.push({ 
+        title: '📁 Project', 
+        value: project.name, 
+        short: true 
+      });
+    }
+    
+    attachment.fields.push({ 
+      title: '📦 Environment', 
+      value: deployment?.target || 'production', 
+      short: true 
+    });
+    
+    if (meta.githubCommitRef) {
+      attachment.fields.push({ 
+        title: '🌿 Branch', 
+        value: meta.githubCommitRef, 
+        short: true 
+      });
+    }
+    
+    if (meta.githubCommitAuthorLogin) {
+      attachment.fields.push({ 
+        title: '👤 Author', 
+        value: meta.githubCommitAuthorLogin, 
+        short: true 
+      });
+    }
+    
+    if (meta.githubCommitMessage) {
+      attachment.fields.push({ 
+        title: '💬 Commit Message', 
+        value: meta.githubCommitMessage.substring(0, 100), 
+        short: false 
+      });
+    }
+    
+    // Add action buttons
+    attachment.actions = [];
+    if (links?.project) {
+      attachment.actions.push({
+        type: 'button',
+        text: '📊 View Project',
+        url: links.project
+      });
+    }
+    
+    return attachment;
+  } catch (error) {
+    console.error('Error formatting deployment canceled:', error);
+    return {
+      fallback: 'Deployment canceled',
+      color: '#666',
+      title: '🚫 Deployment Canceled',
+      text: 'The deployment was canceled.'
+    };
   }
-  
-  return text;
 }

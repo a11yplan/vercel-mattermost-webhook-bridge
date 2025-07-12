@@ -3,26 +3,51 @@ const testPayloads = {
     type: "deployment",
     payload: {
       deployment: {
-        id: "dpl_test123",
-        url: "my-app-abc123.vercel.app",
-        name: "my-app",
+        id: "dpl_3bvdNVGny8Ery4B6aFouPHNPrzmk",
+        url: "darkhedgeio-hn09d97ho-a11yplan.vercel.app",
+        name: "darkhedgeio",
         target: "production",
         ready: false,
+        inspectorUrl: "https://vercel.com/a11yplan/darkhedgeio/3bvdNVGny8Ery4B6aFouPHNPrzmk",
         meta: {
           githubCommitRef: "main",
-          githubCommitMessage: "Add new feature",
-          githubCommitAuthorLogin: "johndoe",
-          githubCommitSha: "abc123def456"
+          githubCommitMessage: "bump",
+          githubCommitAuthorLogin: "mrvnklm",
+          githubCommitAuthorEmail: "24477241+mrvnklm@users.noreply.github.com",
+          githubCommitSha: "5c54a91795358ed8e4e9f70d0656b64117e960b8",
+          githubCommitOrg: "a11yplan",
+          githubCommitRepo: "darkhedgeio",
+          githubDeployment: "1",
+          githubOrg: "a11yplan",
+          githubRepo: "darkhedgeio",
+          githubRepoOwnerType: "Organization",
+          githubCommitRepoId: "1001500868",
+          githubRepoId: "1001500868",
+          githubRepoVisibility: "private",
+          githubHost: "github.com",
+          branchAlias: "darkhedgeio-git-main-a11yplan.vercel.app",
+          action: "redeploy",
+          originalDeploymentId: "dpl_28uVQrejbH9EYUYjrg3B8DshSAQm"
         }
       },
       project: {
-        id: "prj_test123",
-        name: "my-awesome-app"
+        id: "prj_WGKECis2jp4TLKMpZTXyEcNBux4T",
+        name: "darkhedgeio"
       },
       team: {
-        id: "team_test123",
-        name: "My Team"
-      }
+        id: "team_EXnb8RdCXjFBUFNDXqdMh5yh",
+        name: "a11yplan"
+      },
+      links: {
+        deployment: "https://vercel.com/a11yplan/darkhedgeio/3bvdNVGny8Ery4B6aFouPHNPrzmk",
+        project: "https://vercel.com/a11yplan/darkhedgeio"
+      },
+      user: {
+        id: "a8jPbQUK4PmErjxIlrtvvIRB"
+      },
+      plan: "pro",
+      regions: ["iad1"],
+      type: "LAMBDAS"
     },
     createdAt: new Date().toISOString()
   },
@@ -67,12 +92,17 @@ const testPayloads = {
   }
 };
 
-async function testWebhook(payload) {
+async function testWebhook(payload, webhookUrl = null) {
   console.log('Testing webhook with payload type:', payload.type);
-  console.log('Sending to: http://localhost:8787/webhook');
+  
+  let url = 'http://localhost:8787/webhook';
+  if (webhookUrl) {
+    url += `?webhook_url=${encodeURIComponent(webhookUrl)}`;
+  }
+  console.log('Sending to:', url);
   
   try {
-    const response = await fetch('http://localhost:8787/webhook', {
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -92,10 +122,20 @@ async function testWebhook(payload) {
 async function runTests() {
   console.log('🧪 Testing Vercel webhook conversions...\n');
   console.log('Make sure to run "npm run dev" in another terminal first!\n');
-  console.log('Also ensure MATTERMOST_WEBHOOK_URL is set in .dev.vars\n');
+  
+  const args = process.argv.slice(2);
+  const customWebhookUrl = args.find(arg => arg.startsWith('--webhook-url='))?.split('=')[1];
+  
+  if (customWebhookUrl) {
+    console.log(`Using custom webhook URL: ${customWebhookUrl}\n`);
+  } else {
+    console.log('Using MATTERMOST_WEBHOOK_URL from .dev.vars\n');
+    console.log('Tip: You can also pass a webhook URL as a query parameter:\n');
+    console.log('     node test/test-webhook.js --webhook-url=https://your-mattermost.com/hooks/xxx\n');
+  }
   
   for (const [name, payload] of Object.entries(testPayloads)) {
-    await testWebhook(payload);
+    await testWebhook(payload, customWebhookUrl);
     await new Promise(resolve => setTimeout(resolve, 1000));
   }
   
